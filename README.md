@@ -15,7 +15,20 @@ A simple web application built with Go, PostgreSQL, and Bootstrap. Features incl
 
 - Go 1.16 or higher
 - PostgreSQL 12 or higher
-- `postgres` user with password `postgres` (or update credentials in main.go)
+
+## Environment Variables
+
+The application uses the following environment variables (with their default values):
+
+```
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_NAME=kbzozeit
+```
+
+You can set these variables in your environment or create a `.env` file.
 
 ## Installation
 
@@ -30,9 +43,11 @@ cd KBZOZeit3
 go mod download
 ```
 
-3. Make sure PostgreSQL is running on localhost:5432
+3. Set up environment variables (optional - defaults will be used if not set)
 
-4. Run the application:
+4. Make sure PostgreSQL is running
+
+5. Run the application:
 ```bash
 go run main.go
 ```

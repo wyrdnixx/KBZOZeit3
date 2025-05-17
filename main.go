@@ -7,7 +7,9 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
@@ -19,15 +21,30 @@ var (
 	db        *sql.DB
 	store     *sessions.CookieStore
 	templates *template.Template
+	host      = getEnvOrDefault("DB_HOST", "localhost")
+	port      = getEnvOrDefaultInt("DB_PORT", 5432)
+	user      = getEnvOrDefault("DB_USER", "postgres")
+	password  = getEnvOrDefault("DB_PASSWORD", "postgres")
+	dbname    = getEnvOrDefault("DB_NAME", "kbzozeit")
 )
 
-const (
-	host     = "localhost"
-	port     = 5432
-	user     = "postgres"
-	password = "postgres"
-	dbname   = "webapp"
-)
+// Helper function to get environment variable with default value
+func getEnvOrDefault(key, defaultValue string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return defaultValue
+}
+
+// Helper function to get environment variable as integer with default value
+func getEnvOrDefaultInt(key string, defaultValue int) int {
+	if value, exists := os.LookupEnv(key); exists {
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
+		}
+	}
+	return defaultValue
+}
 
 func createDatabase() error {
 	// Connect to postgres database first
@@ -79,7 +96,8 @@ func initDB() error {
 		CREATE TABLE IF NOT EXISTS users (
 			id SERIAL PRIMARY KEY,
 			username VARCHAR(50) UNIQUE NOT NULL,
-			password VARCHAR(100) NOT NULL
+			password VARCHAR(100) NOT NULL,
+			is_admin BOOLEAN NOT NULL DEFAULT false
 		);
 
 		CREATE TABLE IF NOT EXISTS names (
@@ -193,6 +211,12 @@ func main() {
 	// API routes
 	r.HandleFunc("/api/names", authMiddleware(getNamesHandler)).Methods("GET")
 
+	// Admin API routes
+	r.HandleFunc("/api/users", authMiddleware(adminRequired(getUsersHandler))).Methods("GET")
+	r.HandleFunc("/api/users", authMiddleware(adminRequired(createUserHandler))).Methods("POST")
+	r.HandleFunc("/api/users/{id}/make-admin", authMiddleware(adminRequired(makeAdminHandler))).Methods("POST")
+	r.HandleFunc("/api/users/{id}", authMiddleware(adminRequired(deleteUserHandler))).Methods("DELETE")
+
 	log.Println("Routes configured, server starting on :8080...")
 	log.Fatal(http.ListenAndServe(":8080", r))
 }
@@ -280,8 +304,11 @@ func loginPostHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Login attempt for username: %s", username)
 
-	var storedPassword string
-	err := db.QueryRow("SELECT password FROM users WHERE username = $1", username).Scan(&storedPassword)
+	var (
+		storedPassword string
+		isAdmin        bool
+	)
+	err := db.QueryRow("SELECT password, is_admin FROM users WHERE username = $1", username).Scan(&storedPassword, &isAdmin)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// Create new user
@@ -293,13 +320,25 @@ func loginPostHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			_, err = db.Exec("INSERT INTO users (username, password) VALUES ($1, $2)", username, string(hashedPassword))
+			// First user in the system becomes an admin
+			var userCount int
+			err = db.QueryRow("SELECT COUNT(*) FROM users").Scan(&userCount)
+			if err != nil {
+				log.Printf("Error counting users: %v", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+
+			isAdmin = userCount == 0 // First user becomes admin
+
+			_, err = db.Exec("INSERT INTO users (username, password, is_admin) VALUES ($1, $2, $3)",
+				username, string(hashedPassword), isAdmin)
 			if err != nil {
 				log.Printf("Error creating user: %v", err)
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
 				return
 			}
-			log.Printf("New user created successfully: %s", username)
+			log.Printf("New user created successfully: %s (admin: %v)", username, isAdmin)
 		} else {
 			log.Printf("Database error: %v", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -313,7 +352,7 @@ func loginPostHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 			return
 		}
-		log.Printf("Password verified for user: %s", username)
+		log.Printf("Password verified for user: %s (admin: %v)", username, isAdmin)
 	}
 
 	// Get a new session or existing one
@@ -327,6 +366,7 @@ func loginPostHandler(w http.ResponseWriter, r *http.Request) {
 	// Set session values
 	session.Values["authenticated"] = true
 	session.Values["username"] = username
+	session.Values["is_admin"] = isAdmin
 
 	// Save session
 	err = session.Save(r, w)
@@ -336,14 +376,6 @@ func loginPostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("Session saved successfully for user: %s with values: %+v", username, session.Values)
-
-	// Verify session was set
-	savedSession, err := store.Get(r, "session-name")
-	if err != nil {
-		log.Printf("Error verifying session: %v", err)
-	} else {
-		log.Printf("Verified session values after save: %+v", savedSession.Values)
-	}
 
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
@@ -371,16 +403,22 @@ func dashboardHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Rendering dashboard for user: %s", username)
+	isAdmin, ok := session.Values["is_admin"].(bool)
+	if !ok {
+		isAdmin = false
+	}
+
+	log.Printf("Rendering dashboard for user: %s (admin: %v)", username, isAdmin)
 	data := struct {
 		Username string
+		IsAdmin  bool
 		Page     string
 	}{
 		Username: username,
+		IsAdmin:  isAdmin,
 		Page:     "dashboard",
 	}
 
-	// Execute the layout template directly
 	err = templates.ExecuteTemplate(w, "layout", data)
 	if err != nil {
 		log.Printf("Template error in dashboard: %v", err)
@@ -465,4 +503,204 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		log.Printf("User authenticated in middleware, proceeding with request")
 		next.ServeHTTP(w, r)
 	}
+}
+
+// Add a new function to check if a user is admin
+func isUserAdmin(username string) (bool, error) {
+	var isAdmin bool
+	err := db.QueryRow("SELECT is_admin FROM users WHERE username = $1", username).Scan(&isAdmin)
+	if err != nil {
+		return false, err
+	}
+	return isAdmin, nil
+}
+
+// Add adminRequired middleware
+func adminRequired(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, err := store.Get(r, "session-name")
+		if err != nil {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+
+		isAdmin, ok := session.Values["is_admin"].(bool)
+		if !ok || !isAdmin {
+			http.Error(w, "Unauthorized - Admin access required", http.StatusForbidden)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	}
+}
+
+// Add these structs for JSON responses
+type User struct {
+	ID       int    `json:"id"`
+	Username string `json:"username"`
+	IsAdmin  bool   `json:"is_admin"`
+}
+
+type APIResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// Add these new handler functions
+func getUsersHandler(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query("SELECT id, username, is_admin FROM users")
+	if err != nil {
+		log.Printf("Error querying users: %v", err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var user User
+		if err := rows.Scan(&user.ID, &user.Username, &user.IsAdmin); err != nil {
+			log.Printf("Error scanning user: %v", err)
+			http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+			return
+		}
+		users = append(users, user)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(users); err != nil {
+		log.Printf("Error encoding JSON: %v", err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+}
+
+func makeAdminHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userID := vars["id"]
+
+	// Don't allow users to modify their own admin status
+	session, _ := store.Get(r, "session-name")
+	currentUsername := session.Values["username"].(string)
+
+	var targetUsername string
+	err := db.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&targetUsername)
+	if err != nil {
+		http.Error(w, `{"error":"User not found"}`, http.StatusNotFound)
+		return
+	}
+
+	if currentUsername == targetUsername {
+		http.Error(w, `{"error":"Cannot modify your own admin status"}`, http.StatusForbidden)
+		return
+	}
+
+	_, err = db.Exec("UPDATE users SET is_admin = true WHERE id = $1", userID)
+	if err != nil {
+		log.Printf("Error updating user: %v", err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	response := APIResponse{
+		Success: true,
+		Message: "User successfully made admin",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func deleteUserHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userID := vars["id"]
+
+	// Don't allow users to delete themselves
+	session, _ := store.Get(r, "session-name")
+	currentUsername := session.Values["username"].(string)
+
+	var targetUsername string
+	err := db.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&targetUsername)
+	if err != nil {
+		http.Error(w, `{"error":"User not found"}`, http.StatusNotFound)
+		return
+	}
+
+	if currentUsername == targetUsername {
+		http.Error(w, `{"error":"Cannot delete your own account"}`, http.StatusForbidden)
+		return
+	}
+
+	_, err = db.Exec("DELETE FROM users WHERE id = $1", userID)
+	if err != nil {
+		log.Printf("Error deleting user: %v", err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	response := APIResponse{
+		Success: true,
+		Message: "User successfully deleted",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+type CreateUserRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	IsAdmin  bool   `json:"is_admin"`
+}
+
+func createUserHandler(w http.ResponseWriter, r *http.Request) {
+	var req CreateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Validate input
+	if req.Username == "" || req.Password == "" {
+		http.Error(w, `{"error":"Username and password are required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Check if username already exists
+	var exists bool
+	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", req.Username).Scan(&exists)
+	if err != nil {
+		log.Printf("Error checking username existence: %v", err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+	if exists {
+		http.Error(w, `{"error":"Username already exists"}`, http.StatusConflict)
+		return
+	}
+
+	// Hash password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("Error hashing password: %v", err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Create user
+	_, err = db.Exec("INSERT INTO users (username, password, is_admin) VALUES ($1, $2, $3)",
+		req.Username, string(hashedPassword), req.IsAdmin)
+	if err != nil {
+		log.Printf("Error creating user: %v", err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	response := APIResponse{
+		Success: true,
+		Message: "User created successfully",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
