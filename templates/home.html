@@ -1,0 +1,29 @@
+{{define "home-content"}}
+<div class="text-center py-5">
+    <!-- Debug info -->
+    <div class="alert alert-info">
+        Template rendering: Home page
+        {{if .Username}}
+        <br>Username: {{.Username}}
+        {{else}}
+        <br>No user logged in
+        {{end}}
+    </div>
+
+    <h1 class="display-4">Welcome to Go Web App</h1>
+    <p class="lead">A simple web application built with Go, PostgreSQL, and Bootstrap</p>
+    {{if not .Username}}
+    <div class="mt-4">
+        <a href="/login" class="btn btn-primary btn-lg">Login</a>
+    </div>
+    {{else}}
+    <div class="mt-4">
+        <a href="/dashboard" class="btn btn-primary btn-lg">Go to Dashboard</a>
+    </div>
+    {{end}}
+</div>
+{{end}}
+
+{{define "home"}}
+    {{template "layout" .}}
+{{end}} 

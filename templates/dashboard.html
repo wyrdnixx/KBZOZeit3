@@ -1,0 +1,60 @@
+{{define "dashboard-content"}}
+<!-- Debug info -->
+<div class="alert alert-info mb-4">
+    Template: Dashboard page
+    {{if .Username}}
+    <br>Current user: {{.Username}}
+    {{else}}
+    <br>No user logged in
+    {{end}}
+</div>
+
+<h1 class="mb-4">Welcome, {{.Username}}!</h1>
+
+<div class="card">
+    <div class="card-header">
+        <h3 class="mb-0">Names List</h3>
+    </div>
+    <div class="card-body">
+        <div id="namesList" class="list-group">
+            <!-- Names will be loaded here -->
+        </div>
+    </div>
+</div>
+
+<script>
+    // Fetch names from the API
+    fetch('/api/names')
+        .then(response => {
+            if (!response.ok) {
+                if (response.status === 401 || response.status === 403) {
+                    // Redirect to login page if unauthorized
+                    window.location.href = '/login';
+                    throw new Error('Unauthorized');
+                }
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        })
+        .then(data => {
+            const namesList = document.getElementById('namesList');
+            if (data.names && Array.isArray(data.names)) {
+                data.names.forEach(name => {
+                    const item = document.createElement('div');
+                    item.className = 'list-group-item';
+                    item.textContent = name;
+                    namesList.appendChild(item);
+                });
+            } else {
+                throw new Error('Invalid data format');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            const namesList = document.getElementById('namesList');
+            if (error.message !== 'Unauthorized') {
+                namesList.innerHTML = '<div class="alert alert-danger">Error loading names</div>';
+            }
+        });
+</script>
+{{end}} 
