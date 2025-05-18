@@ -110,7 +110,7 @@ func main() {
 	// Static files
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
-	// Routes
+	// Basic routes
 	r.HandleFunc("/", homeHandler).Methods("GET")
 	r.HandleFunc("/login", loginHandler).Methods("GET")
 	r.HandleFunc("/login", loginPostHandler).Methods("POST")
@@ -118,10 +118,20 @@ func main() {
 	r.HandleFunc("/logout", logoutHandler).Methods("POST")
 	r.HandleFunc("/users", authMiddleware(adminRequired(userHandler.HandleUsers))).Methods("GET")
 
-	// API routes
-	r.HandleFunc("/api/names", authMiddleware(getNamesHandler)).Methods("GET")
+	// Time tracking API routes
+	r.HandleFunc("/api/clock-in", authMiddleware(handleClockIn)).Methods("POST")
+	r.HandleFunc("/api/clock-out", authMiddleware(handleClockOut)).Methods("POST")
+	r.HandleFunc("/api/time-entries", authMiddleware(handleGetTimeEntries)).Methods("GET")
+	r.HandleFunc("/api/time-entries/{id}", authMiddleware(handleUpdateTimeEntry)).Methods("PUT")
+	r.HandleFunc("/api/time-entries/total", authMiddleware(handleGetTotalHours)).Methods("GET")
+	r.HandleFunc("/api/time-entries/manual", authMiddleware(handleManualTimeEntry)).Methods("POST")
 
-	// Admin API routes
+	// Contract management API routes
+	r.HandleFunc("/api/contracts", authMiddleware(adminRequired(handleCreateContract))).Methods("POST")
+	r.HandleFunc("/api/contracts", authMiddleware(handleGetContracts)).Methods("GET")
+	r.HandleFunc("/api/contracts/{id}", authMiddleware(adminRequired(handleDeleteContract))).Methods("DELETE")
+
+	// User management API routes
 	r.HandleFunc("/api/users", authMiddleware(adminRequired(userHandler.HandleGetUsers))).Methods("GET")
 	r.HandleFunc("/api/users", authMiddleware(adminRequired(userHandler.HandleCreateUser))).Methods("POST")
 	r.HandleFunc("/api/users/{id}/make-admin", authMiddleware(adminRequired(userHandler.HandleMakeAdmin))).Methods("POST")

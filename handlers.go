@@ -1,9 +1,10 @@
 package main
 
 import (
-	"encoding/json"
+	"database/sql"
 	"log"
 	"net/http"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -136,9 +137,53 @@ func dashboardHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, ok := session.Values["user_id"].(int)
+	if !ok {
+		log.Printf("Error getting user_id from session")
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
 	isAdmin, ok := session.Values["is_admin"].(bool)
 	if !ok {
 		isAdmin = false
+	}
+
+	// Get current active contract
+	var contract struct {
+		ID            int
+		StartDate     time.Time
+		EndDate       *time.Time
+		HoursPerMonth int
+	}
+
+	err = db.QueryRow(`
+		SELECT id, start_date, end_date, hours_per_month 
+		FROM contracts 
+		WHERE user_id = $1 
+		AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+		AND start_date <= CURRENT_DATE
+		ORDER BY start_date DESC 
+		LIMIT 1`, userID).Scan(&contract.ID, &contract.StartDate, &contract.EndDate, &contract.HoursPerMonth)
+	if err != nil && err != sql.ErrNoRows {
+		log.Printf("Error querying contract: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// Get current clock-in status
+	var currentClockIn *time.Time
+	err = db.QueryRow(`
+		SELECT clock_in 
+		FROM time_entries 
+		WHERE user_id = $1 
+		AND clock_out IS NULL 
+		ORDER BY clock_in DESC 
+		LIMIT 1`, userID).Scan(&currentClockIn)
+	if err != nil && err != sql.ErrNoRows {
+		log.Printf("Error querying current clock-in: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
 
 	data := map[string]interface{}{
@@ -146,6 +191,9 @@ func dashboardHandler(w http.ResponseWriter, r *http.Request) {
 		"Authenticated": true,
 		"IsAdmin":       isAdmin,
 		"Page":          "dashboard",
+		"Contract":      contract,
+		"IsClockedIn":   currentClockIn != nil,
+		"ClockInTime":   currentClockIn,
 	}
 
 	err = templates.ExecuteTemplate(w, "layout", data)
@@ -163,38 +211,6 @@ func logoutHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-func getNamesHandler(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT name FROM names ORDER BY name")
-	if err != nil {
-		log.Printf("Error querying names: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	var namesList []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			log.Printf("Error scanning row: %v", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-		namesList = append(namesList, name)
-	}
-
-	response := map[string]interface{}{
-		"names": namesList,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("Error encoding JSON: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-}
-
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Auth middleware checking request from %s for path: %s", r.RemoteAddr, r.URL.Path)
@@ -205,25 +221,13 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Debug session values
-		log.Printf("Session values: %+v", session.Values)
-
 		auth, ok := session.Values["authenticated"].(bool)
-		if !ok {
-			log.Printf("No auth value in session or wrong type")
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
-			return
-		}
-		if !auth {
-			log.Printf("User not authenticated (auth value is false)")
+		if !ok || !auth {
+			log.Printf("User not authenticated")
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
 
-		username, ok := session.Values["username"].(string)
-		log.Printf("Username from session: %q (valid: %v)", username, ok)
-
-		log.Printf("User authenticated in middleware, proceeding with request")
 		next.ServeHTTP(w, r)
 	}
 }
@@ -232,13 +236,13 @@ func adminRequired(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		session, err := store.Get(r, "session-name")
 		if err != nil {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
 		isAdmin, ok := session.Values["is_admin"].(bool)
 		if !ok || !isAdmin {
-			http.Error(w, "Unauthorized - Admin access required", http.StatusForbidden)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 

@@ -46,8 +46,44 @@
     {{end}}
 </div>
 
+<!-- Contract Modal -->
+<div class="modal fade" id="contractModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Manage Contracts</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="create-contract-form" class="mb-4">
+                    <h6>Create New Contract</h6>
+                    <input type="hidden" id="contract-user-id">
+                    <div class="mb-3">
+                        <label for="contract-start-date" class="form-label">Start Date</label>
+                        <input type="date" class="form-control" id="contract-start-date" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="contract-end-date" class="form-label">End Date (Optional)</label>
+                        <input type="date" class="form-control" id="contract-end-date">
+                    </div>
+                    <div class="mb-3">
+                        <label for="contract-hours" class="form-label">Hours per Month</label>
+                        <input type="number" class="form-control" id="contract-hours" required min="1">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Create Contract</button>
+                </form>
+
+                <h6>Existing Contracts</h6>
+                <div id="contracts-list" class="list-group">
+                    <!-- Contracts will be loaded here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
-{{if .IsAdmin}}
+{{if .IsAdmin}}(function() {
 // Handle user creation form submission
 document.getElementById('create-user-form').addEventListener('submit', function(e) {
     e.preventDefault();
@@ -82,81 +118,180 @@ document.getElementById('create-user-form').addEventListener('submit', function(
 });
 
 // Load users for admin
-fetch('/api/users')
-    .then(response => response.json())
-    .then(users => {
-        const usersList = document.getElementById('users-list');
-        users.forEach(user => {
-            const item = document.createElement('div');
-            item.className = 'list-group-item d-flex justify-content-between align-items-center';
-            
-            const userInfo = document.createElement('div');
-            userInfo.innerHTML = `
-                <strong>${user.username}</strong>
-                ${user.is_admin ? '<span class="badge bg-primary ms-2">Admin</span>' : ''}
-            `;
-            
-            const actions = document.createElement('div');
-            if (!user.is_admin) {
-                const makeAdminBtn = document.createElement('button');
-                makeAdminBtn.className = 'btn btn-sm btn-success me-2';
-                makeAdminBtn.textContent = 'Make Admin';
-                makeAdminBtn.onclick = () => makeUserAdmin(user.id);
-                actions.appendChild(makeAdminBtn);
-            }
-            
-            const deleteBtn = document.createElement('button');
-            deleteBtn.className = 'btn btn-sm btn-danger';
-            deleteBtn.textContent = 'Delete';
-            deleteBtn.onclick = () => deleteUser(user.id);
-            actions.appendChild(deleteBtn);
-            
-            item.appendChild(userInfo);
-            item.appendChild(actions);
-            usersList.appendChild(item);
-        });
-    })
-    .catch(error => console.error('Error:', error));
+function loadUsers() {
+    fetch('/api/users')
+        .then(response => response.json())
+        .then(users => {
+            const usersList = document.getElementById('users-list');
+            usersList.innerHTML = '';
 
-function makeUserAdmin(userId) {
-    if (!confirm('Are you sure you want to make this user an admin?')) return;
+            users.forEach(user => {
+                const item = document.createElement('div');
+                item.className = 'list-group-item d-flex justify-content-between align-items-center';
+                item.innerHTML = `
+                    <div>
+                        <h6 class="mb-0">${user.username}</h6>
+                        ${user.is_admin ? '<span class="badge bg-primary">Admin</span>' : ''}
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-outline-primary btn-sm manage-contracts" data-user-id="${user.id}">
+                            Manage Contracts
+                        </button>
+                        ${!user.is_admin ? `
+                            <button class="btn btn-outline-success btn-sm make-admin" data-user-id="${user.id}">
+                                Make Admin
+                            </button>
+                        ` : ''}
+                        <button class="btn btn-outline-danger btn-sm delete-user" data-user-id="${user.id}">
+                            Delete
+                        </button>
+                    </div>
+                `;
+                usersList.appendChild(item);
+            });
+        })
+        .catch(error => console.error('Error:', error));
+}
+
+// Load contracts for a user
+function loadContracts(userId) {
+    fetch(`/api/contracts?user_id=${userId}`)
+        .then(response => response.json())
+        .then(contracts => {
+            const contractsList = document.getElementById('contracts-list');
+            contractsList.innerHTML = '';
+
+            contracts.forEach(contract => {
+                const item = document.createElement('div');
+                item.className = 'list-group-item d-flex justify-content-between align-items-center';
+                item.innerHTML = `
+                    <div>
+                        <strong>Start:</strong> ${new Date(contract.start_date).toLocaleDateString()}<br>
+                        <strong>End:</strong> ${contract.end_date ? new Date(contract.end_date).toLocaleDateString() : 'Indefinite'}<br>
+                        <strong>Hours/Month:</strong> ${contract.hours_per_month}
+                    </div>
+                    <button class="btn btn-outline-danger btn-sm delete-contract" data-contract-id="${contract.id}">
+                        Delete
+                    </button>
+                `;
+                contractsList.appendChild(item);
+            });
+        })
+        .catch(error => console.error('Error:', error));
+}
+
+// Event delegation for user actions
+document.getElementById('users-list').addEventListener('click', function(e) {
+    const target = e.target;
+
+    // Manage Contracts
+    if (target.classList.contains('manage-contracts')) {
+        const userId = target.dataset.userId;
+        document.getElementById('contract-user-id').value = userId;
+        loadContracts(userId);
+        new bootstrap.Modal(document.getElementById('contractModal')).show();
+    }
+
+    // Make Admin
+    if (target.classList.contains('make-admin')) {
+        const userId = target.dataset.userId;
+        if (confirm('Are you sure you want to make this user an admin?')) {
+            fetch(`/api/users/${userId}/make-admin`, { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        loadUsers();
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error making user admin');
+                });
+        }
+    }
+
+    // Delete User
+    if (target.classList.contains('delete-user')) {
+        const userId = target.dataset.userId;
+        if (confirm('Are you sure you want to delete this user?')) {
+            fetch(`/api/users/${userId}`, { method: 'DELETE' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        loadUsers();
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error deleting user');
+                });
+        }
+    }
+});
+
+// Event delegation for contract actions
+document.getElementById('contracts-list').addEventListener('click', function(e) {
+    if (e.target.classList.contains('delete-contract')) {
+        const contractId = e.target.dataset.contractId;
+        if (confirm('Are you sure you want to delete this contract?')) {
+            fetch(`/api/contracts/${contractId}`, { method: 'DELETE' })
+                .then(response => {
+                    if (response.ok) {
+                        loadContracts(document.getElementById('contract-user-id').value);
+                    } else {
+                        throw new Error('Failed to delete contract');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error deleting contract');
+                });
+        }
+    }
+});
+
+// Handle contract creation
+document.getElementById('create-contract-form').addEventListener('submit', function(e) {
+    e.preventDefault();
     
-    fetch(`/api/users/${userId}/make-admin`, {
+    const userId = document.getElementById('contract-user-id').value;
+    const startDate = document.getElementById('contract-start-date').value;
+    const endDate = document.getElementById('contract-end-date').value;
+    const hoursPerMonth = parseInt(document.getElementById('contract-hours').value);
+
+    fetch('/api/contracts', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-        }
+        },
+        body: JSON.stringify({
+            user_id: parseInt(userId),
+            start_date: startDate,
+            end_date: endDate || "",
+            hours_per_month: hoursPerMonth
+        })
     })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            location.reload();
-        } else {
-            alert('Error: ' + data.message);
+    .then(response => {
+        if (!response.ok) {
+            return response.text().then(text => {
+                throw new Error(text || 'Failed to create contract');
+            });
         }
+        loadContracts(userId);
+        this.reset();
     })
-    .catch(error => console.error('Error:', error));
-}
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error creating contract: ' + error.message);
+    });
+});
 
-function deleteUser(userId) {
-    if (!confirm('Are you sure you want to delete this user?')) return;
-    
-    fetch(`/api/users/${userId}`, {
-        method: 'DELETE',
-        headers: {
-            'Content-Type': 'application/json',
-        }
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            location.reload();
-        } else {
-            alert('Error: ' + data.message);
-        }
-    })
-    .catch(error => console.error('Error:', error));
-}
-{{end}}
+// Initial load
+loadUsers();
+})();{{end}}
 </script>
 {{end}} 

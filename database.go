@@ -59,39 +59,44 @@ func initDB() error {
 			is_admin BOOLEAN NOT NULL DEFAULT false
 		);
 
-		CREATE TABLE IF NOT EXISTS names (
+		CREATE TABLE IF NOT EXISTS contracts (
 			id SERIAL PRIMARY KEY,
-			name VARCHAR(100) NOT NULL
+			user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+			start_date DATE NOT NULL,
+			end_date DATE,
+			hours_per_month INTEGER NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			CONSTRAINT valid_dates CHECK (end_date IS NULL OR end_date >= start_date)
 		);
+
+		CREATE TABLE IF NOT EXISTS time_entries (
+			id SERIAL PRIMARY KEY,
+			user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+			clock_in TIMESTAMP WITH TIME ZONE NOT NULL,
+			clock_out TIMESTAMP WITH TIME ZONE,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			CONSTRAINT valid_times CHECK (clock_out IS NULL OR clock_out >= clock_in)
+		);
+
+		-- Function to update updated_at timestamp
+		CREATE OR REPLACE FUNCTION update_updated_at_column()
+		RETURNS TRIGGER AS $$
+		BEGIN
+			NEW.updated_at = CURRENT_TIMESTAMP;
+			RETURN NEW;
+		END;
+		$$ language 'plpgsql';
+
+		-- Trigger to automatically update updated_at
+		DROP TRIGGER IF EXISTS update_time_entries_updated_at ON time_entries;
+		CREATE TRIGGER update_time_entries_updated_at
+			BEFORE UPDATE ON time_entries
+			FOR EACH ROW
+			EXECUTE FUNCTION update_updated_at_column();
 	`)
 	if err != nil {
 		return err
-	}
-
-	// Insert example names if the table is empty
-	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM names").Scan(&count)
-	if err != nil {
-		return err
-	}
-
-	if count == 0 {
-		exampleNames := []string{
-			"John", "Jane", "Michael", "Emma", "William", "Olivia", "James", "Sophia",
-			"Alexander", "Isabella", "Benjamin", "Mia", "Lucas", "Charlotte", "Henry",
-			"Amelia", "Sebastian", "Harper", "Jack", "Evelyn", "Daniel", "Abigail",
-			"Matthew", "Emily", "David", "Elizabeth", "Joseph", "Sofia", "Samuel",
-			"Avery", "Gabriel", "Ella", "Carter", "Scarlett", "Owen", "Victoria",
-			"Wyatt", "Madison", "Oliver", "Luna", "Elijah", "Grace", "Liam", "Chloe",
-			"Jacob", "Penelope", "Ethan", "Layla", "Noah", "Riley", "Aiden",
-		}
-
-		for _, name := range exampleNames {
-			_, err := db.Exec("INSERT INTO names (name) VALUES ($1)", name)
-			if err != nil {
-				return err
-			}
-		}
 	}
 
 	return nil
