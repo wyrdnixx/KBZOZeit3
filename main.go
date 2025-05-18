@@ -156,7 +156,7 @@ func initTemplates() (*template.Template, error) {
 	}
 
 	// Verify required templates exist
-	required := []string{"layout", "dashboard-content", "login-content", "home-content"}
+	required := []string{"layout", "dashboard-content", "login-content", "home-content", "users-content"}
 	for _, name := range required {
 		if tmpl.Lookup(name) == nil {
 			return nil, fmt.Errorf("required template %q not found", name)
@@ -198,6 +198,9 @@ func main() {
 
 	r := mux.NewRouter()
 
+	// Initialize user handler
+	userHandler := NewUserHandler(db, store, templates)
+
 	// Static files
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
@@ -207,15 +210,16 @@ func main() {
 	r.HandleFunc("/login", loginPostHandler).Methods("POST")
 	r.HandleFunc("/dashboard", authMiddleware(dashboardHandler)).Methods("GET")
 	r.HandleFunc("/logout", logoutHandler).Methods("POST")
+	r.HandleFunc("/users", authMiddleware(adminRequired(userHandler.HandleUsers))).Methods("GET")
 
 	// API routes
 	r.HandleFunc("/api/names", authMiddleware(getNamesHandler)).Methods("GET")
 
 	// Admin API routes
-	r.HandleFunc("/api/users", authMiddleware(adminRequired(getUsersHandler))).Methods("GET")
-	r.HandleFunc("/api/users", authMiddleware(adminRequired(createUserHandler))).Methods("POST")
-	r.HandleFunc("/api/users/{id}/make-admin", authMiddleware(adminRequired(makeAdminHandler))).Methods("POST")
-	r.HandleFunc("/api/users/{id}", authMiddleware(adminRequired(deleteUserHandler))).Methods("DELETE")
+	r.HandleFunc("/api/users", authMiddleware(adminRequired(userHandler.HandleGetUsers))).Methods("GET")
+	r.HandleFunc("/api/users", authMiddleware(adminRequired(userHandler.HandleCreateUser))).Methods("POST")
+	r.HandleFunc("/api/users/{id}/make-admin", authMiddleware(adminRequired(userHandler.HandleMakeAdmin))).Methods("POST")
+	r.HandleFunc("/api/users/{id}", authMiddleware(adminRequired(userHandler.HandleDeleteUser))).Methods("DELETE")
 
 	log.Println("Routes configured, server starting on :8080...")
 	log.Fatal(http.ListenAndServe(":8080", r))
@@ -240,11 +244,18 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Home page requested, auth: %v, username: %q", auth, username)
 
+	isAdmin, ok := session.Values["is_admin"].(bool)
+	if !ok {
+		isAdmin = false
+	}
+
 	data := struct {
 		Username string
+		IsAdmin  bool
 		Page     string
 	}{
 		Username: username,
+		IsAdmin:  isAdmin,
 		Page:     "home",
 	}
 
@@ -505,16 +516,6 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// Add a new function to check if a user is admin
-func isUserAdmin(username string) (bool, error) {
-	var isAdmin bool
-	err := db.QueryRow("SELECT is_admin FROM users WHERE username = $1", username).Scan(&isAdmin)
-	if err != nil {
-		return false, err
-	}
-	return isAdmin, nil
-}
-
 // Add adminRequired middleware
 func adminRequired(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -532,175 +533,4 @@ func adminRequired(next http.HandlerFunc) http.HandlerFunc {
 
 		next.ServeHTTP(w, r)
 	}
-}
-
-// Add these structs for JSON responses
-type User struct {
-	ID       int    `json:"id"`
-	Username string `json:"username"`
-	IsAdmin  bool   `json:"is_admin"`
-}
-
-type APIResponse struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-}
-
-// Add these new handler functions
-func getUsersHandler(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT id, username, is_admin FROM users")
-	if err != nil {
-		log.Printf("Error querying users: %v", err)
-		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	var users []User
-	for rows.Next() {
-		var user User
-		if err := rows.Scan(&user.ID, &user.Username, &user.IsAdmin); err != nil {
-			log.Printf("Error scanning user: %v", err)
-			http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
-			return
-		}
-		users = append(users, user)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(users); err != nil {
-		log.Printf("Error encoding JSON: %v", err)
-		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
-		return
-	}
-}
-
-func makeAdminHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	userID := vars["id"]
-
-	// Don't allow users to modify their own admin status
-	session, _ := store.Get(r, "session-name")
-	currentUsername := session.Values["username"].(string)
-
-	var targetUsername string
-	err := db.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&targetUsername)
-	if err != nil {
-		http.Error(w, `{"error":"User not found"}`, http.StatusNotFound)
-		return
-	}
-
-	if currentUsername == targetUsername {
-		http.Error(w, `{"error":"Cannot modify your own admin status"}`, http.StatusForbidden)
-		return
-	}
-
-	_, err = db.Exec("UPDATE users SET is_admin = true WHERE id = $1", userID)
-	if err != nil {
-		log.Printf("Error updating user: %v", err)
-		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
-		return
-	}
-
-	response := APIResponse{
-		Success: true,
-		Message: "User successfully made admin",
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
-}
-
-func deleteUserHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	userID := vars["id"]
-
-	// Don't allow users to delete themselves
-	session, _ := store.Get(r, "session-name")
-	currentUsername := session.Values["username"].(string)
-
-	var targetUsername string
-	err := db.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&targetUsername)
-	if err != nil {
-		http.Error(w, `{"error":"User not found"}`, http.StatusNotFound)
-		return
-	}
-
-	if currentUsername == targetUsername {
-		http.Error(w, `{"error":"Cannot delete your own account"}`, http.StatusForbidden)
-		return
-	}
-
-	_, err = db.Exec("DELETE FROM users WHERE id = $1", userID)
-	if err != nil {
-		log.Printf("Error deleting user: %v", err)
-		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
-		return
-	}
-
-	response := APIResponse{
-		Success: true,
-		Message: "User successfully deleted",
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
-}
-
-type CreateUserRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	IsAdmin  bool   `json:"is_admin"`
-}
-
-func createUserHandler(w http.ResponseWriter, r *http.Request) {
-	var req CreateUserRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Validate input
-	if req.Username == "" || req.Password == "" {
-		http.Error(w, `{"error":"Username and password are required"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Check if username already exists
-	var exists bool
-	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", req.Username).Scan(&exists)
-	if err != nil {
-		log.Printf("Error checking username existence: %v", err)
-		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
-		return
-	}
-	if exists {
-		http.Error(w, `{"error":"Username already exists"}`, http.StatusConflict)
-		return
-	}
-
-	// Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		log.Printf("Error hashing password: %v", err)
-		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
-		return
-	}
-
-	// Create user
-	_, err = db.Exec("INSERT INTO users (username, password, is_admin) VALUES ($1, $2, $3)",
-		req.Username, string(hashedPassword), req.IsAdmin)
-	if err != nil {
-		log.Printf("Error creating user: %v", err)
-		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
-		return
-	}
-
-	response := APIResponse{
-		Success: true,
-		Message: "User created successfully",
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
 }
