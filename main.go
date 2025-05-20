@@ -20,7 +20,7 @@ var (
 	store     *sessions.CookieStore
 	templates *template.Template
 	host      = getEnvOrDefault("DB_HOST", "localhost")
-	port      = getEnvOrDefaultInt("DB_PORT", 5432)
+	port      = getEnvOrDefaultInt("	", 5432)
 	user      = getEnvOrDefault("DB_USER", "postgres")
 	password  = getEnvOrDefault("DB_PASSWORD", "postgres")
 	dbname    = getEnvOrDefault("DB_NAME", "kbzozeit")
@@ -136,6 +136,7 @@ func main() {
 	r.HandleFunc("/api/users", authMiddleware(adminRequired(userHandler.HandleCreateUser))).Methods("POST")
 	r.HandleFunc("/api/users/{id}/make-admin", authMiddleware(adminRequired(userHandler.HandleMakeAdmin))).Methods("POST")
 	r.HandleFunc("/api/users/{id}", authMiddleware(adminRequired(userHandler.HandleDeleteUser))).Methods("DELETE")
+	r.HandleFunc("/api/users/change-password", authMiddleware(userHandler.HandleChangePassword)).Methods("POST")
 
 	log.Println("Routes configured, server starting on :8080...")
 	log.Fatal(http.ListenAndServe(":8080", r))

@@ -243,3 +243,72 @@ func (h *UserHandler) HandleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
+
+// HandleChangePassword handles the POST /api/users/change-password endpoint
+func (h *UserHandler) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
+	session, _ := h.store.Get(r, "session-name")
+	userID := session.Values["user_id"].(int)
+
+	var req struct {
+		OldPassword     string `json:"old_password"`
+		NewPassword     string `json:"new_password"`
+		ConfirmPassword string `json:"confirm_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Validate input
+	if req.NewPassword != req.ConfirmPassword {
+		http.Error(w, `{"error":"New passwords do not match"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Get current password hash
+	var currentPasswordHash string
+	err := h.db.QueryRow("SELECT password FROM users WHERE id = $1", userID).Scan(&currentPasswordHash)
+	if err != nil {
+		log.Printf("Error querying user: %v", err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Verify old password
+	err = bcrypt.CompareHashAndPassword([]byte(currentPasswordHash), []byte(req.OldPassword))
+	if err != nil {
+		http.Error(w, `{"error":"Current password is incorrect"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Hash new password
+	newPasswordHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("Error hashing password: %v", err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Update password
+	_, err = h.db.Exec("UPDATE users SET password = $1 WHERE id = $2", string(newPasswordHash), userID)
+	if err != nil {
+		log.Printf("Error updating password: %v", err)
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Clear session to force re-login
+	session.Values = map[interface{}]interface{}{}
+	session.Save(r, w)
+
+	response := struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}{
+		Success: true,
+		Message: "Password changed successfully",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
