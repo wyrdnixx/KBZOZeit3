@@ -14,7 +14,7 @@ A simple web application built with Go, PostgreSQL, and Bootstrap. Features incl
 ## Prerequisites
 
 - Go 1.16 or higher
-- PostgreSQL 12 or higher
+- PostgreSQL 12 or higher 
 
 ## Environment Variables
 
