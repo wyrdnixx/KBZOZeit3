@@ -1,6 +1,6 @@
 {{define "dashboard-content"}}
 <div class="container mt-4">
-    <h1>Welcome, {{.Username}}!</h1>
+    
     {{if .IsAdmin}}
     <div class="alert alert-info">
         <strong>Admin Access:</strong> You have administrative privileges.
@@ -9,50 +9,6 @@
     
     <div class="row mt-4">
         <div class="col-md-12">
-            <!-- Contract Info -->
-            {{if .Contract.ID}}
-            <div class="card mb-4">
-                <div class="card-header">
-                    <h5 class="card-title mb-0">Current Contract</h5>
-                </div>
-                <div class="card-body">
-                    <div class="row mb-3">
-                        <div class="col-md-4">
-                            <strong>Start Date:</strong> {{.Contract.StartDate.Format "2006-01-02"}}
-                        </div>
-                        <div class="col-md-4">
-                            <strong>End Date:</strong> {{if .Contract.EndDate}}{{.Contract.EndDate.Format "2006-01-02"}}{{else}}Indefinite{{end}}
-                        </div>
-                        <div class="col-md-4">
-                            <strong>Hours/Month:</strong> {{.Contract.HoursPerMonth}}
-                        </div>
-                    </div>
-                    <div class="row">
-                        <div class="col-md-12">
-                            <div class="table-responsive">
-                                <table class="table table-bordered">
-                                    <thead>
-                                        <tr>
-                                            <th>Period</th>
-                                            <th>Total Required Hours</th>
-                                            <th>Total Worked Hours</th>
-                                            <th>Overall Balance</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="contract-summary">
-                                        <!-- Will be populated by JavaScript -->
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            {{else}}
-            <div class="alert alert-warning mb-4">
-                No active contract found. Please contact your administrator.
-            </div>
-            {{end}}
 
             <!-- Clock In/Out Card -->
             <div class="card mb-4">
@@ -102,6 +58,53 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- Contract Info -->
+            {{if .Contract.ID}}
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Current Contract</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <strong>Start Date:</strong> {{.Contract.StartDate.Format "2006-01-02"}}
+                        </div>
+                        <div class="col-md-4">
+                            <strong>End Date:</strong> {{if .Contract.EndDate}}{{.Contract.EndDate.Format "2006-01-02"}}{{else}}Indefinite{{end}}
+                        </div>
+                        <div class="col-md-4">
+                            <strong>Hours/Month:</strong> {{.Contract.HoursPerMonth}}
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="table-responsive">
+                                <table class="table table-bordered">
+                                    <thead>
+                                        <tr>
+                                            <th>Period</th>
+                                            <th>Total Required Hours</th>
+                                            <th>Total Worked Hours</th>
+                                            <th>Overall Balance</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="contract-summary">
+                                        <!-- Will be populated by JavaScript -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {{else}}
+            <div class="alert alert-warning mb-4">
+                No active contract found. Please contact your administrator.
+            </div>
+            {{end}}
+
+            
 
             <!-- Month Navigation -->
             <div class="card mb-4">
