@@ -123,6 +123,7 @@ func main() {
 	r.HandleFunc("/api/clock-out", authMiddleware(handleClockOut)).Methods("POST")
 	r.HandleFunc("/api/time-entries", authMiddleware(handleGetTimeEntries)).Methods("GET")
 	r.HandleFunc("/api/time-entries/{id}", authMiddleware(handleUpdateTimeEntry)).Methods("PUT")
+	r.HandleFunc("/api/time-entries/{id}", authMiddleware(handleDeleteTimeEntry)).Methods("DELETE")
 	r.HandleFunc("/api/time-entries/total", authMiddleware(handleGetTotalHours)).Methods("GET")
 	r.HandleFunc("/api/time-entries/manual", authMiddleware(handleManualTimeEntry)).Methods("POST")
 
